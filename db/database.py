@@ -1,5 +1,6 @@
 import aiomysql
 import asyncio
+import ssl
 from loguru import logger
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -7,41 +8,48 @@ from typing import Optional
 class DatabaseManager:
     def __init__(self, config: dict):
         self.config = config
-        self.pool: Optional[asyncmy.Pool] = None
+        self.pool: Optional[aiomysql.Pool] = None
         
-    async def _test_connection(self, config: dict) -> bool:
+    def _create_ssl_context(self) -> Optional[ssl.SSLContext]:
+        """Create SSL context for DigitalOcean managed database"""
+        if self.config.get('sslmode') == 'REQUIRED':
+            # Create SSL context that doesn't verify certificates
+            # This is needed for DigitalOcean managed databases
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
+        return None
+        
+    async def _test_connection(self) -> bool:
         """Test a single connection before creating the pool"""
         conn = None
         try:
             logger.info("🔍 Testing database connection...")
-            logger.info(f"📡 Connecting to {config['host']}:{config['port']}")
-
-            # Prepare SSL context if required
-            ssl_context = None
-            if config.get('sslmode') == 'REQUIRED':
-                import ssl
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
-
+            logger.info(f"📡 Connecting to {self.config['host']}:{self.config['port']}")
+            
+            # Create connection with timeout
+            ssl_ctx = self._create_ssl_context()
+            
             conn = await asyncio.wait_for(
                 aiomysql.connect(
-                    host=config['host'],
-                    port=config['port'],
-                    user=config['user'],
-                    password=config['password'],
-                    db=config['database'],
+                    host=self.config['host'],
+                    port=self.config['port'],
+                    user=self.config['user'],
+                    password=self.config['password'],
+                    db=self.config['database'],
                     autocommit=False,
-                    connect_timeout=10,
-                    ssl=ssl_context
+                    ssl=ssl_ctx,
+                    connect_timeout=10
                 ),
-                timeout=15.0  # Total timeout including SSL handshake
+                timeout=15.0
             )
             
             # Test the connection with a simple query
             async with conn.cursor() as cursor:
                 await cursor.execute("SELECT 1")
-                await cursor.fetchone()
+                result = await cursor.fetchone()
+                logger.debug(f"Test query result: {result}")
             
             logger.success("✅ Connection test successful!")
             return True
@@ -50,12 +58,13 @@ class DatabaseManager:
             logger.error("❌ Connection test timed out after 15 seconds")
             return False
         except Exception as e:
-            logger.error(f"❌ Connection test failed: {e}")
+            logger.error(f"❌ Connection test failed: {type(e).__name__}: {e}")
             return False
         finally:
             # Ensure connection is properly closed
             if conn:
                 try:
+                    conn.close()
                     await conn.ensure_closed()
                 except:
                     pass
@@ -64,71 +73,56 @@ class DatabaseManager:
         """Create connection pool on startup"""
         try:
             logger.info("📡 Attempting to connect to database...")
+            logger.info(f"🔌 Database: {self.config['database']} @ {self.config['host']}:{self.config['port']}")
             
-            # Prepare connection configuration
-            connection_config = {
-                'host': self.config['host'],
-                'port': self.config['port'],
-                'user': self.config['user'],
-                'password': self.config['password'],
-                'database': self.config['database'],
-                'autocommit': False,
-                'connect_timeout': 10,
-            }
-            
-            # SSL configuration - if sslmode is REQUIRED, force SSL
+            # SSL configuration
+            ssl_ctx = None
             if self.config.get('sslmode') == 'REQUIRED':
-                import ssl
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
-                connection_config['ssl'] = ssl_context
+                ssl_ctx = self._create_ssl_context()
                 logger.info("🔒 SSL mode enabled (certificate verification disabled)")
             else:
-                connection_config['ssl'] = None
+                logger.info("⚠️ SSL mode disabled")
             
             # Test connection first
-            if not await self._test_connection(connection_config):
+            if not await self._test_connection():
                 raise ConnectionError("Failed to establish initial database connection")
             
-            # Prepare pool configuration
-            pool_config = {
-                'host': connection_config['host'],
-                'port': connection_config['port'],
-                'user': connection_config['user'],
-                'password': connection_config['password'],
-                'db': connection_config['database'],
-                'autocommit': connection_config['autocommit'],
-                'connect_timeout': connection_config['connect_timeout'],
-                'ssl': connection_config['ssl'],
-                'minsize': 1,  # Start with 1 connection to avoid hanging on multiple connections
-                'maxsize': 10,
-                'pool_recycle': 3600,
-            }
-
             logger.info(f"🔌 Creating connection pool...")
-
-            # Create pool with timeout wrapper
+            
+            # Create pool with proper configuration for aiomysql
             self.pool = await asyncio.wait_for(
-                aiomysql.create_pool(**pool_config),
-                timeout=30.0  # Total timeout for pool creation
+                aiomysql.create_pool(
+                    host=self.config['host'],
+                    port=self.config['port'],
+                    user=self.config['user'],
+                    password=self.config['password'],
+                    db=self.config['database'],
+                    minsize=1,  # Start with minimal connections
+                    maxsize=10,
+                    autocommit=False,
+                    ssl=ssl_ctx,
+                    connect_timeout=10,
+                    echo=False,  # Set to True for debugging SQL queries
+                    pool_recycle=3600,  # Recycle connections after 1 hour
+                ),
+                timeout=30.0
             )
-
-            # Get MySQL version to confirm connection
+            
+            # Test the pool by acquiring and releasing a connection
             async with self.pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute("SELECT VERSION()")
                     version = await cursor.fetchone()
                     logger.info(f"📊 MySQL Version: {version[0]}")
-
-            logger.success(f"✅ Database pool created successfully with {pool_config['minsize']}-{pool_config['maxsize']} connections!")
+            
+            logger.success(f"✅ Database pool created successfully with {self.pool.minsize}-{self.pool.maxsize} connections!")
             
         except asyncio.TimeoutError:
             error_msg = "❌ Database pool creation timed out after 30 seconds. Check network connectivity and database availability."
             logger.error(error_msg)
             raise ConnectionError(error_msg)
         except Exception as e:
-            logger.error(f"❌ Failed to create DB pool: {e}")
+            logger.error(f"❌ Failed to create DB pool: {type(e).__name__}: {e}")
             raise
     
     async def close(self):
@@ -145,5 +139,23 @@ class DatabaseManager:
         if not self.pool:
             raise RuntimeError("Database pool not initialized")
         
-        async with self.pool.acquire() as conn:
+        conn = await self.pool.acquire()
+        try:
             yield conn
+        finally:
+            self.pool.release(conn)
+    
+    async def execute_query(self, query: str, params: tuple = None) -> list:
+        """Helper method to execute SELECT queries"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(query, params)
+                return await cursor.fetchall()
+    
+    async def execute_update(self, query: str, params: tuple = None) -> int:
+        """Helper method to execute INSERT/UPDATE/DELETE queries"""
+        async with self.get_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(query, params)
+                await conn.commit()
+                return cursor.rowcount

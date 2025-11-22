@@ -1,6 +1,5 @@
 import json
 import asyncio
-from loguru import logger
 from .base_socket import BaseSocket
 
 class HypeDropSocket(BaseSocket):
@@ -70,7 +69,7 @@ class HypeDropSocket(BaseSocket):
                     "level": str(user_info.get("level", "")),
                     "avatar_url": user_info.get("avatar"),
                     "avatar_hash": None,
-                    "website": "hypedrop",  # ✅ ADDED THIS
+                    "website": "hypedrop",
                     "total_bet": float(player.get("totalBet", 0)),
                     "total_profit": float(player.get("totalProfit", 0)),
                     "total_payout": float(player.get("totalPayout", 0)),
@@ -81,8 +80,9 @@ class HypeDropSocket(BaseSocket):
             if not real_players:
                 return None
 
-            return real_players  # Return list directly
+            return real_players
 
         except Exception as e:
+            from loguru import logger
             logger.error(f"Error parsing HypeDrop message: {e}")
             return None

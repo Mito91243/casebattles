@@ -2,3 +2,12 @@ venv
 db.txt
 .env
 game_results.csv
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Data/Backup files
+data/

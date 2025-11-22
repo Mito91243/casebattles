@@ -34,50 +34,55 @@ class HypeDropSocket(BaseSocket):
             await websocket.send(json.dumps(sub))
             await asyncio.sleep(0.2)
 
-    async def parse_message(self, message) -> dict:
-        try:
-            data = json.loads(message)
-            msg_type = data.get("type")
 
-            if msg_type != "next":
-                return None
+async def parse_message(self, message) -> dict:
+    try:
+        data = json.loads(message)
+        msg_type = data.get("type")
 
-            payload = data.get("payload", {}).get("data", {})
-            
-            if "updatePvpGame" not in payload:
-                return None
-
-            game = payload["updatePvpGame"]["pvpGame"]
-
-            if game.get("status") != "FINISHED":
-                return None
-
-            real_players = []
-
-            for player in game.get("players", []):
-                if player.get("isPvpBot") is True:
-                    continue
-                
-                user_info = player.get("user", {})
-                
-                player_data = {
-                    "display_name": user_info.get("displayName"),
-                    "user_id": player.get("userId"),
-                    "avatar": user_info.get("avatar"),
-                    "total_bet": player.get("totalBet"),
-                    "total_profit": player.get("totalProfit"),
-                    "payout": player.get("totalPayout")
-                }
-                real_players.append(player_data)
-
-            if not real_players:
-                return None
-
-            return {
-                "event": "game_finished",
-                "players": real_players
-            }
-
-        except Exception as e:
-            print(f"Error parsing: {e}") 
+        if msg_type != "next":
             return None
+
+        payload = data.get("payload", {}).get("data", {})
+        
+        if "updatePvpGame" not in payload:
+            return None
+
+        game = payload["updatePvpGame"]["pvpGame"]
+
+        if game.get("status") != "FINISHED":
+            return None
+
+        game_date = game.get("updatedAt")
+        real_players = []
+
+        for player in game.get("players", []):
+            if player.get("isPvpBot") is True:
+                continue
+            
+            user_info = player.get("user", {})
+            external_id = player.get("userId")
+            
+            player_data = {
+                "external_id": external_id,
+                "username": user_info.get("displayName"),
+                "profile_url": f"https://www.hypedrop.com/player/{external_id}/summary",
+                "level": str(user_info.get("level", "")),
+                "avatar_url": user_info.get("avatar"),
+                "avatar_hash": None,
+                "website": "hypedrop",  # ✅ ADDED THIS
+                "total_bet": float(player.get("totalBet", 0)),
+                "total_profit": float(player.get("totalProfit", 0)),
+                "total_payout": float(player.get("totalPayout", 0)),
+                "date": game_date
+            }
+            real_players.append(player_data)
+
+        if not real_players:
+            return None
+
+        return real_players  # Return list directly
+
+    except Exception as e:
+        logger.error(f"Error parsing HypeDrop message: {e}")
+        return None

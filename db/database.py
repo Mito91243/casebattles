@@ -69,8 +69,8 @@ class DatabaseManager:
             
             # SSL configuration - if sslmode is REQUIRED, force SSL
             if self.config.get('sslmode') == 'REQUIRED':
-                # aiomysql accepts True for SSL without verification or a dict for custom SSL context
-                connection_config['ssl'] = {'ssl': True}
+                # aiomysql accepts True for SSL without verification or ssl.SSLContext for custom config
+                connection_config['ssl'] = True
                 logger.info("🔒 SSL mode enabled (no certificate verification)")
             else:
                 connection_config['ssl'] = None

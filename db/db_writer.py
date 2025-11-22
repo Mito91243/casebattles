@@ -55,6 +55,8 @@ class DBWriter:
                 try:
                     await conn.begin()
                     
+                    # IMPORTANT: Using positional parameters (%s) for aiomysql
+                    # Not named parameters like %(username)s
                     upsert_user_sql = """
                         INSERT INTO user (
                             username,
@@ -67,15 +69,7 @@ class DBWriter:
                             created_at,
                             updated_at
                         ) VALUES (
-                            %(username)s,
-                            %(external_id)s,
-                            %(profile_url)s,
-                            %(level)s,
-                            %(avatar_url)s,
-                            %(avatar_hash)s,
-                            %(website)s,
-                            NOW(),
-                            NOW()
+                            %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
                         )
                         ON DUPLICATE KEY UPDATE
                             username = VALUES(username),
@@ -85,15 +79,15 @@ class DBWriter:
                             updated_at = NOW()
                     """
                     
-                    await cursor.execute(upsert_user_sql, {
-                        'username': player['username'],
-                        'external_id': player['external_id'],
-                        'profile_url': player['profile_url'],
-                        'level': player['level'],
-                        'avatar_url': player['avatar_url'],
-                        'avatar_hash': player['avatar_hash'],
-                        'website': player['website']
-                    })
+                    await cursor.execute(upsert_user_sql, (
+                        player['username'],
+                        player['external_id'],
+                        player['profile_url'],
+                        player['level'],
+                        player['avatar_url'],
+                        player['avatar_hash'],
+                        player['website']
+                    ))
                     
                     # Get the user's internal ID
                     await cursor.execute(
@@ -126,22 +120,18 @@ class DBWriter:
                             created_at,
                             updated_at
                         ) VALUES (
-                            %(user_id)s,
-                            %(date)s,
-                            %(total_bet)s,
-                            NOW(),
-                            NOW()
+                            %s, %s, %s, NOW(), NOW()
                         )
                         ON DUPLICATE KEY UPDATE
                             total_wager = total_wager + VALUES(total_wager),
                             updated_at = NOW()
                     """
                     
-                    await cursor.execute(upsert_wager_sql, {
-                        'user_id': user_id,
-                        'date': wager_date,
-                        'total_bet': player['total_bet']
-                    })
+                    await cursor.execute(upsert_wager_sql, (
+                        user_id,
+                        wager_date,
+                        player['total_bet']
+                    ))
                     
                     # Commit transaction
                     await conn.commit()

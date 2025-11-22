@@ -1,4 +1,4 @@
-import asyncmy
+import aiomysql
 import asyncio
 from loguru import logger
 from contextlib import asynccontextmanager
@@ -7,7 +7,7 @@ from typing import Optional
 class DatabaseManager:
     def __init__(self, config: dict):
         self.config = config
-        self.pool: Optional[asyncmy.Pool] = None
+        self.pool: Optional[aiomysql.Pool] = None
         
     async def _test_connection(self, config: dict) -> bool:
         """Test a single connection before creating the pool"""
@@ -15,7 +15,7 @@ class DatabaseManager:
         try:
             logger.info("🔍 Testing database connection...")
             conn = await asyncio.wait_for(
-                asyncmy.connect(
+                aiomysql.connect(
                     host=config['host'],
                     port=config['port'],
                     user=config['user'],
@@ -23,19 +23,19 @@ class DatabaseManager:
                     db=config['database'],
                     autocommit=False,
                     connect_timeout=10,
-                    ssl=config.get('ssl', False)
+                    ssl=config.get('ssl', None)
                 ),
                 timeout=15.0  # Total timeout including SSL handshake
             )
-            
+
             # Test the connection with a simple query
             async with conn.cursor() as cursor:
                 await cursor.execute("SELECT 1")
                 await cursor.fetchone()
-            
+
             logger.success("✅ Connection test successful!")
             return True
-            
+
         except asyncio.TimeoutError:
             logger.error("❌ Connection test timed out after 15 seconds")
             return False
@@ -46,7 +46,8 @@ class DatabaseManager:
             # Ensure connection is properly closed
             if conn:
                 try:
-                    await conn.ensure_closed()
+                    conn.close()
+                    await conn.wait_closed()
                 except:
                     pass
     
@@ -68,29 +69,36 @@ class DatabaseManager:
             
             # SSL configuration - if sslmode is REQUIRED, force SSL
             if self.config.get('sslmode') == 'REQUIRED':
-                connection_config['ssl'] = True
+                # aiomysql accepts True for SSL without verification or a dict for custom SSL context
+                connection_config['ssl'] = {'ssl': True}
                 logger.info("🔒 SSL mode enabled (no certificate verification)")
             else:
-                connection_config['ssl'] = False
+                connection_config['ssl'] = None
             
             # Test connection first
             if not await self._test_connection(connection_config):
                 raise ConnectionError("Failed to establish initial database connection")
             
-            # Prepare pool configuration
+            # Prepare pool configuration for aiomysql
             pool_config = {
-                **connection_config,
-                'db': connection_config['database'],  # asyncmy uses 'db' for pool
-                'minsize': 1,  # Start with 1 connection to avoid hanging on multiple connections
-                'maxsize': 10,
-                'pool_recycle': 3600,
+                'host': connection_config['host'],
+                'port': connection_config['port'],
+                'user': connection_config['user'],
+                'password': connection_config['password'],
+                'db': connection_config['database'],
+                'autocommit': connection_config['autocommit'],
+                'connect_timeout': connection_config['connect_timeout'],
+                'ssl': connection_config['ssl'],
+                'minsize': 1,  # Start with 1 connection
+                'maxsize': 10,  # Maximum pool size
+                'echo': False,  # Disable SQL echo for production
             }
-            
+
             logger.info(f"🔌 Creating connection pool to {self.config['host']}:{self.config['port']}...")
-            
+
             # Create pool with timeout wrapper
             self.pool = await asyncio.wait_for(
-                asyncmy.create_pool(**pool_config),
+                aiomysql.create_pool(**pool_config),
                 timeout=30.0  # Total timeout for pool creation
             )
             

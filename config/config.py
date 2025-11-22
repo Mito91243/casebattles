@@ -5,7 +5,7 @@ from loguru import logger
 # Load environment variables from .env file
 load_dotenv()
 
-class Config:    
+class Config:
     # Database Configuration
     DB_HOST = os.getenv('DB_HOST')
     DB_PORT = int(os.getenv('DB_PORT', 3306))
@@ -13,6 +13,10 @@ class Config:
     DB_PASSWORD = os.getenv('DB_PASSWORD')
     DB_NAME = os.getenv('DB_NAME')
     DB_SSL_MODE = os.getenv('DB_SSL_MODE', 'REQUIRED')
+
+    # Application Configuration
+    ENVIRONMENT = os.getenv('ENVIRONMENT', 'production')
+    BACKUP_FILE_PATH = os.getenv('BACKUP_FILE_PATH', 'data/failed_writes.jsonl')
     
     
     @classmethod

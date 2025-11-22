@@ -14,6 +14,7 @@ class DatabaseManager:
         conn = None
         try:
             logger.info("🔍 Testing database connection...")
+            logger.info(f"📡 Connecting to {config['host']}:{config['port']}")
             conn = await asyncio.wait_for(
                 asyncmy.connect(
                     host=config['host'],
@@ -23,7 +24,7 @@ class DatabaseManager:
                     db=config['database'],
                     autocommit=False,
                     connect_timeout=10,
-                    ssl=config.get('ssl', False)
+                    ssl=config.get('sslmode') == 'REQUIRED'
                 ),
                 timeout=15.0  # Total timeout including SSL handshake
             )
@@ -69,7 +70,7 @@ class DatabaseManager:
             # SSL configuration - if sslmode is REQUIRED, force SSL
             if self.config.get('sslmode') == 'REQUIRED':
                 connection_config['ssl'] = True
-                logger.info("🔒 SSL mode enabled (no certificate verification)")
+                logger.info("🔒 SSL mode enabled (certificate verification disabled)")
             else:
                 connection_config['ssl'] = False
             
@@ -86,15 +87,22 @@ class DatabaseManager:
                 'pool_recycle': 3600,
             }
             
-            logger.info(f"🔌 Creating connection pool to {self.config['host']}:{self.config['port']}...")
-            
+            logger.info(f"🔌 Creating connection pool...")
+
             # Create pool with timeout wrapper
             self.pool = await asyncio.wait_for(
                 asyncmy.create_pool(**pool_config),
                 timeout=30.0  # Total timeout for pool creation
             )
-            
-            logger.success(f"✅ Database pool created successfully!")
+
+            # Get MySQL version to confirm connection
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("SELECT VERSION()")
+                    version = await cursor.fetchone()
+                    logger.info(f"📊 MySQL Version: {version[0]}")
+
+            logger.success(f"✅ Database pool created successfully with {pool_config['minsize']}-{pool_config['maxsize']} connections!")
             
         except asyncio.TimeoutError:
             error_msg = "❌ Database pool creation timed out after 30 seconds. Check network connectivity and database availability."

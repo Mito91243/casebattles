@@ -58,12 +58,14 @@ async def main():
     
     try:
         logger.info(f"🚀 Starting application in {Config.ENVIRONMENT} mode")
-        
+
         # Run forever
+        # NOTE: console_printer is disabled to avoid race condition with db_writer
+        # Both would consume from the same queue. Enable only for debugging.
         await asyncio.gather(
             *socket_tasks,
             db_task,
-            console_printer(queue=data_queue)
+            # console_printer(queue=data_queue)  # Disabled - causes race condition
         )
     except KeyboardInterrupt:
         logger.info("🛑 Shutting down gracefully...")
